@@ -1,0 +1,25 @@
+{
+  "name": "pierics",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pierics — payment & pricing system for a unified AI API aggregator",
+  "type": "commonjs",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "node server/index.js",
+    "start": "node server/index.js",
+    "test": "node server/pricing.test.js"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "bcryptjs": "^2.4.3",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "stripe": "^16.8.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
