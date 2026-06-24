@@ -5,6 +5,13 @@ Node/Express backend (also runs as a Vercel function) · React/Vite frontend ·
 Supabase (Postgres) · Stripe (test mode) · JWT auth. Design: Nothing.tech —
 pure black, dot-matrix, JetBrains Mono headers, single accent red `#D71921`.
 
+**Live (frontend only, GitHub Pages):** https://maqsudjon-cell.github.io/pierics/
+— pricing page + calculator work standalone; dashboard/billing need the backend.
+
+**Full stack (frontend + backend, one domain):** one-click deploy to Vercel →
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fmaqsudjon-cell%2Fpierics)
+
 ```
 pierics/
 ├── db/schema.sql          # Supabase schema (idempotent — safe to re-run)
@@ -101,12 +108,41 @@ The **Pricing page + calculator work with zero config** (pure pricing engine).
 Auth / usage / billing need Supabase + Stripe — without them those routes return
 `503` and the UI shows a friendly "backend not configured" state.
 
-## Deploy (Vercel)
+## Deploy — both halves, one domain (Vercel)
 
-`vercel.json` routes `/api/*` to `api/index.js`. Set the same env vars in the
-Vercel dashboard, point the Stripe webhook at
-`https://<your-app>/api/billing/webhook`, and deploy `web/` as a static build
-(`npm --prefix web run build` → `web/dist`).
+This repo is a single full-stack deploy: Vercel builds the React app to static
+files **and** runs the Express API as serverless functions under `/api`, all on
+one URL. Config lives in [`vercel.json`](vercel.json):
+
+```jsonc
+{
+  "buildCommand": "npm --prefix web install && npm --prefix web run build",
+  "outputDirectory": "web/dist",                       // ← frontend
+  "rewrites": [{ "source": "/api/(.*)", "destination": "/api/index.js" }] // ← backend
+}
+```
+
+**Steps:**
+1. Go to **https://vercel.com/new** → "Log in with GitHub" → import `pierics`
+   (or click the **Deploy with Vercel** button up top). Hit Deploy.
+2. The site is live at `https://<your-app>.vercel.app`. The frontend, plus
+   `/api/health`, `/api/plans`, `/api/estimate` work **immediately, no config**.
+3. To enable accounts + billing, add these in Vercel → Settings → Environment
+   Variables, then redeploy:
+
+   | Variable | From |
+   |----------|------|
+   | `JWT_SECRET` | any long random string |
+   | `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API |
+   | `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PRO_PRICE_ID` | Stripe (test mode) |
+   | `APP_URL` | your `https://<your-app>.vercel.app` |
+
+4. Run [`db/schema.sql`](db/schema.sql) in Supabase, and point the Stripe webhook
+   at `https://<your-app>.vercel.app/api/billing/webhook`.
+
+> **Why not GitHub Pages for the whole thing?** Pages only serves static files —
+> it can't run the Node backend. That's why the Pages link above is frontend-only.
+> Vercel runs both. (To refresh the Pages build: `DEPLOY_TARGET=pages npm --prefix web run build`.)
 
 ---
 
