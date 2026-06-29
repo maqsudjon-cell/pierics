@@ -44,6 +44,96 @@ function Stat({ k, v, sub, children }) {
   return <div className="stat"><div className="k">{k}</div><div className="v">{v}</div>{sub && <div className="sub">{sub}</div>}{children}</div>;
 }
 
+function CopyField({ value }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <div className="copyfield">
+      <code>{value}</code>
+      <button className="btn" style={{ width: 'auto' }} onClick={() => {
+        navigator.clipboard?.writeText(value); setCopied(true); setTimeout(() => setCopied(false), 1500);
+      }}>{copied ? 'Copied' : 'Copy'}</button>
+    </div>
+  );
+}
+
+function ApiKeys() {
+  const [keys, setKeys] = useState(null);
+  const [err, setErr] = useState('');
+  const [name, setName] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [newKey, setNewKey] = useState(null);
+
+  function load() { api.keys().then((d) => setKeys(d.keys)).catch((e) => setErr(e.status === 503 ? 'Backend not configured.' : e.message)); }
+  useEffect(() => { load(); }, []);
+
+  async function create() {
+    setBusy(true); setErr('');
+    try { const r = await api.createKey(name || 'default'); setNewKey(r.key); setName(''); load(); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  }
+  async function revoke(id) {
+    if (!window.confirm('Revoke this key? Apps using it will stop working.')) return;
+    try { await api.revokeKey(id); load(); } catch (e) { setErr(e.message); }
+  }
+
+  const base = (typeof window !== 'undefined' ? window.location.origin : '') + '/api/v1';
+
+  return (
+    <section style={{ borderTop: '1px solid var(--line-soft)', marginTop: 48, paddingTop: 48 }}>
+      <span className="eyebrow"><span className="n">// 006</span> API KEYS</span>
+      <h2 className="section-title">Your API keys</h2>
+      <p className="muted" style={{ marginTop: 8, maxWidth: 560, lineHeight: 1.6 }}>
+        Call AI models through the Pierics gateway with a key below. Usage is metered and billed to your plan.
+      </p>
+
+      <div style={{ display: 'flex', gap: 10, marginTop: 20, flexWrap: 'wrap' }}>
+        <input className="keyname" placeholder="key name (e.g. production)" value={name} onChange={(e) => setName(e.target.value)} />
+        <button className="btn primary" style={{ width: 'auto' }} disabled={busy} onClick={create}>{busy ? '···' : 'Create key'}</button>
+      </div>
+
+      {newKey && (
+        <div className="note" style={{ marginTop: 18 }}>
+          <b>Save this key now — you won’t see it again.</b>
+          <div style={{ marginTop: 10 }}><CopyField value={newKey} /></div>
+        </div>
+      )}
+      {err && <div className="out-error" style={{ fontSize: 13, marginTop: 14 }}>{err}</div>}
+
+      {keys && keys.length > 0 && (
+        <table className="ptable" style={{ marginTop: 28 }}>
+          <thead><tr><th>Key</th><th>Name</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+          <tbody>
+            {keys.map((k) => (
+              <tr key={k.id} style={k.revoked ? { opacity: 0.45 } : undefined}>
+                <td className="model">{k.prefix}…{k.revoked && <span className="badge" style={{ marginLeft: 8 }}>revoked</span>}</td>
+                <td className="num">{k.name}</td>
+                <td className="num">{new Date(k.created_at).toLocaleDateString()}</td>
+                <td className="num">{k.last_used_at ? new Date(k.last_used_at).toLocaleDateString() : '—'}</td>
+                <td>{!k.revoked && <button className="btn" style={{ width: 'auto', padding: '6px 12px' }} onClick={() => revoke(k.id)}>Revoke</button>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+      {keys && keys.length === 0 && <p className="muted" style={{ marginTop: 18 }}>No keys yet. Create one to start calling the API.</p>}
+
+      <h3 style={{ fontFamily: 'var(--mono)', fontSize: 14, marginTop: 36, letterSpacing: 1, color: 'var(--muted-2)' }}>// HOW TO USE</h3>
+      <p className="muted" style={{ marginTop: 8 }}>Base URL <code>{base}</code> — OpenAI-compatible. Models: <code>cheap</code>, <code>fast</code>, <code>quality</code>.</p>
+      <pre className="codeblock">{`curl ${base}/chat/completions \\
+  -H "Authorization: Bearer $PIERICS_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"fast","messages":[{"role":"user","content":"Hello!"}]}'`}</pre>
+      <pre className="codeblock">{`from openai import OpenAI
+client = OpenAI(api_key="pk_live_...", base_url="${base}")
+r = client.chat.completions.create(
+    model="fast",   # cheap | fast | quality
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+print(r.choices[0].message.content)`}</pre>
+    </section>
+  );
+}
+
 export default function Dashboard() {
   const [authed, setAuthed] = useState(isAuthed());
   const [data, setData] = useState(null);
@@ -122,6 +212,8 @@ export default function Dashboard() {
             </tbody>
           </table>
         )}
+
+        <ApiKeys />
       </section>
     </div></main>
   );

@@ -3,13 +3,21 @@
 // All money math derives from these numbers. Keep in sync with db/schema.sql.
 // ════════════════════════════════════════════════════════════════════
 
+// Demo budget mode: serve the `quality` tier from gpt-4o-mini (~16x cheaper)
+// AT ITS REAL PRICE so metering + the budget kill-switch stay accurate.
+// Default OFF = byte-for-byte the production GPT-4o behaviour (keeps tests green).
+const DEMO = process.env.DEMO_BUDGET_MODE === '1';
+
 // Model alias → provider + base price (USD per 1,000,000 tokens).
 // Aliases (cheap/fast/quality) are what users select; the provider model
 // is what we actually call. Prices are the raw provider cost.
 const MODELS = {
   cheap:   { provider: 'groq',   model: 'llama3-8b-8192',  input: 0.05, output: 0.08,  label: 'Llama 3 8B'   },
   fast:    { provider: 'groq',   model: 'llama3-70b-8192', input: 0.59, output: 0.79,  label: 'Llama 3 70B'  },
-  quality: { provider: 'openai', model: 'gpt-4o',          input: 2.50, output: 10.00, label: 'GPT-4o'       },
+  // The swap changes model AND price together — never bill gpt-4o rates for a mini call.
+  quality: DEMO
+    ? { provider: 'openai', model: 'gpt-4o-mini', input: 0.15, output: 0.60,  label: 'GPT-4o mini (demo)' }
+    : { provider: 'openai', model: 'gpt-4o',      input: 2.50, output: 10.00, label: 'GPT-4o'             },
   // Listed in the provider price sheet; available as an extra, not a tier default.
   'gpt-4o-mini': { provider: 'openai', model: 'gpt-4o-mini', input: 0.15, output: 0.60, label: 'GPT-4o mini' },
 };
@@ -27,6 +35,7 @@ const PLANS = {
     support: 'email_48h',
     features: { dashboard: 'basic', caching: false, csvExport: false, teamMembers: 1 },
     requiresCard: false,
+    maxOutputTokensPerRequest: 1024,   // gateway clamps max_tokens → bounds worst-case cost
   },
   payg: {
     id: 'payg',
@@ -40,6 +49,7 @@ const PLANS = {
     support: 'email_24h',
     features: { dashboard: 'full', caching: false, csvExport: false, teamMembers: 1 },
     requiresCard: true,
+    maxOutputTokensPerRequest: 4096,
     autoTopUp: { thresholdUsd: 2, amountUsd: 10 },
   },
   pro: {
@@ -55,6 +65,7 @@ const PLANS = {
     support: 'priority_4h_discord',
     features: { dashboard: 'full', caching: true, csvExport: true, teamMembers: 3 },
     requiresCard: true,
+    maxOutputTokensPerRequest: 8192,
     trialDays: 7,
   },
 };

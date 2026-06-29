@@ -65,6 +65,7 @@ function calculateCost({
   outputTokens = 0,
   tokensUsedThisMonth = 0,
   tokenBalance = 0,
+  enforce = true,   // false at meter time: classify + price WITHOUT re-throwing limit guards
 }) {
   const planCfg = PLANS[plan];
   if (!planCfg) throw new PricingError(`Unknown plan: ${plan}`, 'unknown_plan', 400);
@@ -86,7 +87,7 @@ function calculateCost({
   // ── FREE: consume monthly allowance, no dollar charge ──────────────
   if (plan === 'free') {
     const remaining = planCfg.monthlyTokens - tokensUsedThisMonth;
-    if (totalTokens > remaining) {
+    if (enforce && totalTokens > remaining) {
       throw new PricingError(
         'Monthly free token allowance exhausted',
         'allowance_exhausted',
@@ -99,7 +100,7 @@ function calculateCost({
   // ── PAYG: pure usage at 1.3x, charged to prepaid balance ───────────
   if (plan === 'payg') {
     const final = round6(base * planCfg.markup);
-    if (final > tokenBalance) {
+    if (enforce && final > tokenBalance) {
       throw new PricingError(
         'Insufficient balance — add funds or enable auto top-up',
         'insufficient_balance',
@@ -116,7 +117,7 @@ function calculateCost({
     // Safeguard: bill premium models at overage rate even inside the allowance.
     if (PRO_GUARD.billPremiumSeparately && isPremium) {
       const final = round6(base * planCfg.overageMarkup);
-      if (final > tokenBalance) {
+      if (enforce && final > tokenBalance) {
         throw new PricingError('Insufficient balance for premium-model usage', 'insufficient_balance', 402);
       }
       return buildResult({ tier: 'pro', m, base, markup: planCfg.overageMarkup, final, billedFrom: 'overage_premium' });
@@ -134,7 +135,7 @@ function calculateCost({
     const overageTokens = totalTokens - remaining;
     const overageBase = totalTokens > 0 ? base * (overageTokens / totalTokens) : 0;
     const final = round6(overageBase * planCfg.overageMarkup);
-    if (final > tokenBalance) {
+    if (enforce && final > tokenBalance) {
       throw new PricingError('Insufficient balance for overage — add funds', 'insufficient_balance', 402);
     }
     return buildResult({
@@ -144,6 +145,49 @@ function calculateCost({
   }
 
   throw new PricingError(`Unhandled plan: ${plan}`, 'unhandled_plan', 400);
+}
+
+/**
+ * Cheap pre-flight gate for the gateway — decide BEFORE any upstream call,
+ * using only the user's current plan/usage/balance. Mirrors calculateCost's
+ * access + allowance + balance semantics, but returns gateway-shaped codes
+ * instead of throwing. Tier rules live here (single source of truth).
+ * @returns {{ok:true, alias, provider, upstreamModel} | {ok:false, status, error}}
+ */
+function preflight({ plan, model, tokensUsedThisMonth = 0, tokenBalance = 0 }) {
+  const planCfg = PLANS[plan];
+  if (!planCfg) return { ok: false, status: 400, error: 'unknown_plan' };
+
+  let m;
+  try { m = resolveModel(model); }
+  catch { return { ok: false, status: 400, error: 'unknown_model' }; }
+
+  if (!planCfg.models.includes(m.aliasKey)) {
+    return { ok: false, status: 403, error: 'model_not_available' };
+  }
+
+  if (plan === 'free') {
+    if (tokensUsedThisMonth >= planCfg.monthlyTokens) {
+      return { ok: false, status: 402, error: 'quota_exceeded' };
+    }
+  } else if (plan === 'payg') {
+    if (tokenBalance <= 0) return { ok: false, status: 402, error: 'insufficient_balance' };
+  } else if (plan === 'pro') {
+    const allowanceLeft = (planCfg.monthlyTokens || 0) - tokensUsedThisMonth;
+    if (allowanceLeft <= 0 && tokenBalance <= 0) {
+      return { ok: false, status: 402, error: 'insufficient_balance' };
+    }
+  }
+
+  return { ok: true, alias: m.aliasKey, provider: m.provider, upstreamModel: m.model };
+}
+
+/** Clamp a requested max_tokens down to the plan's per-request ceiling. */
+function clampOutputTokens(plan, requested) {
+  const ceiling = (PLANS[plan] && PLANS[plan].maxOutputTokensPerRequest) || 1024;
+  const n = Number(requested);
+  if (!Number.isFinite(n) || n <= 0) return ceiling; // no / invalid request → use ceiling
+  return Math.min(Math.floor(n), ceiling);
 }
 
 /**
@@ -166,4 +210,4 @@ function priceTable() {
   return rows;
 }
 
-module.exports = { calculateCost, priceTable, providerCost, resolveModel, round6, round4, PricingError };
+module.exports = { calculateCost, preflight, clampOutputTokens, priceTable, providerCost, resolveModel, round6, round4, PricingError };

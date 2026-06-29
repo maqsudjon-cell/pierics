@@ -100,6 +100,59 @@ create table if not exists api_keys (
   created_at  timestamptz default now()
 );
 
+-- ── // 006  Gateway metering: approximate flag + budget counter ─────
+alter table usage_logs add column if not exists approximate boolean default false;
+
+-- Cheap month-keyed platform spend counter (base cost) for the budget
+-- kill-switch — avoids a full usage_logs aggregate on every request.
+create table if not exists platform_spend (
+  month           text primary key,        -- 'YYYY-MM'
+  base_cost_total numeric default 0,
+  updated_at      timestamptz default now()
+);
+
+-- ── // 007  Atomic usage + billing RPC (fixes the read-modify-write race) ─
+-- The ONLY place the gateway mutates tokens_used_this_month / token_balance.
+-- Does monthly rollover, the increment/debit, and the spend counter bump in
+-- one transaction. Bounded overshoot is intentional (balance may go slightly
+-- negative on the one in-flight request; the next request is gated up front).
+create or replace function increment_usage_and_bill(
+  p_user_id    uuid,
+  p_tokens     bigint,
+  p_final_cost numeric,
+  p_base_cost  numeric,
+  p_billed_from text
+) returns table(tokens_used_this_month bigint, token_balance numeric)
+language plpgsql as $$
+declare
+  v_period_start timestamptz;
+begin
+  -- Lock the row, then roll the monthly window if it's from a previous month.
+  select u.usage_period_start into v_period_start from users u where u.id = p_user_id for update;
+  if v_period_start is null or date_trunc('month', v_period_start) < date_trunc('month', now()) then
+    update users set tokens_used_this_month = 0, usage_period_start = now() where id = p_user_id;
+  end if;
+
+  update users
+     set tokens_used_this_month = users.tokens_used_this_month + p_tokens,
+         token_balance = users.token_balance - case
+           when p_billed_from in ('balance', 'overage', 'overage_premium') then coalesce(p_final_cost, 0)
+           else 0 end
+   where id = p_user_id
+   returning users.tokens_used_this_month, users.token_balance
+   into tokens_used_this_month, token_balance;
+
+  -- Same transaction: bump the month-to-date platform spend (base cost).
+  insert into platform_spend(month, base_cost_total)
+    values (to_char(now(), 'YYYY-MM'), coalesce(p_base_cost, 0))
+    on conflict (month) do update
+      set base_cost_total = platform_spend.base_cost_total + coalesce(p_base_cost, 0),
+          updated_at = now();
+
+  return next;
+end;
+$$;
+
 -- ── Indexes ─────────────────────────────────────────────────────────
 create index if not exists idx_usage_logs_user_date  on usage_logs(user_id, created_at desc);
 create index if not exists idx_transactions_user      on transactions(user_id, created_at desc);

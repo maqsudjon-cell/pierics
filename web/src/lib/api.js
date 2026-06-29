@@ -30,4 +30,7 @@ export const api = {
   login: (b) => req('/auth/login', { method: 'POST', body: JSON.stringify(b) }),
   checkout: () => req('/billing/checkout', { method: 'POST', body: '{}' }),
   topup: (amount) => req('/billing/topup', { method: 'POST', body: JSON.stringify({ amount }) }),
+  keys: () => req('/keys'),
+  createKey: (name) => req('/keys', { method: 'POST', body: JSON.stringify({ name }) }),
+  revokeKey: (id) => req(`/keys/${id}`, { method: 'DELETE' }),
 };
